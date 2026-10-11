@@ -57,3 +57,4 @@ Para varios celulares: instalar el mismo APK en cada uno; cada instalación gene
 - **App Flutter:** archivos `pubspec.yaml`, `lib/main.dart`, `lib/config.dart`, `lib/api.dart`, `lib/ui.dart`, `lib/pages/live_page.dart`, `lib/pages/history_page.dart`. Ejecuta `flutter pub get`.
 - **Web:** `dashboard/index.html` con tu API URL y API Key.
 - Envío cada 1 s (`kIntervaloSegundos`) y la web consulta cada 1 s. Si usas Usage Plan en API Gateway, súbelo a Rate 50 / Burst 100.
+- **Video:** https://drive.google.com/drive/folders/17yLJ8VkTvMjeW8Ih9B-yfqENw_Xdd56g?usp=sharing
