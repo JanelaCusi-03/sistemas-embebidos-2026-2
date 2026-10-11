@@ -1,0 +1,19 @@
+{
+  "name": "caza-de-colores",
+  "version": "1.0.0",
+  "description": "Caza de Colores — Battle royale de arena multijugador con grupos y objetivos de color",
+  "main": "server.js",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js",
+    "build": "node -e \"console.log('Build complete')\""
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "@types/ws": "^8.5.14"
+  }
+}

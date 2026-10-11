@@ -1,0 +1,8 @@
+{
+  "name": "Caza de Colores",
+  "description": "Juego multijugador battle royale en tiempo real con sistema de salas, chat y cacería por objetivos de colores.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

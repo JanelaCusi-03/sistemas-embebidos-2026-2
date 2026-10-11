@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Caza de Colores</title>
+	<meta name="description" content="Juego multijugador battle royale en tiempo real con sistema de salas, chat y cacería por objetivos de colores.">
+	<meta property="og:title" content="Caza de Colores">
+	<meta property="og:description" content="Juego multijugador battle royale en tiempo real con sistema de salas, chat y cacería por objetivos de colores.">
+	<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="lobby" class="screen">
+	<header id="lobby-header">
+		<div id="lobby-badge" class="badge">⚔ ARENA MULTIJUGADOR</div>
+		<h1 id="lobby-title">CAZA DE COLORES</h1>
+		<p id="lobby-subtitle" class="subtitle">Elimina únicamente a tu color asignado antes de que termine la ronda</p>
+
+		<!-- Tabs del Lobby -->
+		<nav id="lobby-tabs" class="tab-bar">
+			<button id="tab-play" class="tab-btn active" data-tab="menu-panel">🎮 JUGAR / SALAS</button>
+			<button id="tab-rules" class="tab-btn" data-tab="rules-panel">📜 REGLAS & OBJETIVOS</button>
+			<button id="tab-settings" class="tab-btn" data-tab="settings-panel">⚙ AJUSTES</button>
+		</nav>
+
+		<!-- Widget de Música Chill de Espera -->
+		<div id="lobby-music-bar" class="lobby-music-bar">
+			<button id="btn-toggle-lobby-music" class="music-pill" title="Música Chill de Espera: Clic para pausar o reproducir">
+				<span class="music-icon-disc">🎵</span>
+				<span class="music-title-wrap">
+					<span class="music-caption">Música Chill de Espera</span>
+					<span class="music-state-tag" id="music-state-tag">Sonando</span>
+				</span>
+				<span class="music-eq" id="music-eq">
+					<span class="eq-col"></span>
+					<span class="eq-col"></span>
+					<span class="eq-col"></span>
+					<span class="eq-col"></span>
+				</span>
+			</button>
+		</div>
+	</header>
+
+	<main id="lobby-content">
+		<!-- Panel Principal de Jugar -->
+		<div id="menu-panel" class="tab-content active">
+			<div id="lobby-grid">
+				<!-- Tarjeta de Perfil & Guardián -->
+				<section id="profile-card" class="lobby-card">
+					<div class="card-header">
+						<span class="card-icon">🐱</span>
+						<h2>TU GUARDIÁN</h2>
+					</div>
+
+					<div class="field-group">
+						<label for="name-input">NOMBRE DE JUGADOR</label>
+						<div id="name-input-wrap">
+							<input id="name-input" type="text" maxlength="18" value="Jugador" placeholder="Tu apodo...">
+						</div>
+					</div>
+
+					<div id="guardian-preview-container">
+						<div id="guardian-preview">
+							<canvas id="preview-canvas" width="240" height="240"></canvas>
+						</div>
+					</div>
+				</section>
+
+				<!-- Tarjeta de Acciones de Partida -->
+				<section id="matchmaking-card" class="lobby-card">
+					<div class="card-header">
+						<span class="card-icon">⚡</span>
+						<h2>PARTIDA MULTIJUGADOR</h2>
+					</div>
+
+					<div id="create-room-box" class="sub-panel">
+						<h3>Crear Nueva Sala</h3>
+						<p class="panel-desc">Inicia una sala como anfitrión y comparte el código con amigos o juega con bots de práctica.</p>
+						<button id="btn-create" class="btn-primary">⚔ CREAR PARTIDA</button>
+					</div>
+
+					<div class="divider-or"><span>O ÚNETE A UNA EXISTENTE</span></div>
+
+					<div id="join-room-box" class="sub-panel">
+						<label for="code-input">CÓDIGO DE SALA</label>
+						<div id="code-input-wrap">
+							<input id="code-input" type="text" maxlength="8" placeholder="Ej: 7K4QZ">
+						</div>
+						<button id="btn-join" class="btn-primary btn-alt">🔗 UNIRSE A PARTIDA</button>
+					</div>
+
+					<p id="menu-status" class="status-msg" role="status" aria-live="polite"></p>
+				</section>
+			</div>
+		</div>
+
+		<!-- Panel de Sala de Espera (Waiting Room) -->
+		<div id="waiting-panel" class="tab-content hidden">
+			<section id="waiting-card" class="lobby-card wide-card">
+				<div id="waiting-header">
+					<div>
+						<span class="badge badge-pulse">EN ESPERA</span>
+						<h2>SALA DE COMBATE</h2>
+					</div>
+					<div id="room-code-badge-wrap">
+						<span class="code-label">CÓDIGO:</span>
+						<span id="room-code-display" class="code-val">——</span>
+						<button id="btn-copy-code" class="btn-copy" title="Copiar código">📋 Copiar</button>
+						<span id="copy-feedback" class="copy-feedback hidden">¡Copiado!</span>
+					</div>
+				</div>
+
+				<div id="waiting-info-bar">
+					<div id="player-count-badge" class="info-pill">👥 Jugadores: <strong id="player-count-num">1</strong></div>
+					<div id="host-badge-info" class="info-pill">👑 Anfitrión: <strong id="host-name-val">—</strong></div>
+				</div>
+
+				<div id="waiting-players-section">
+					<div class="section-title-row">
+						<h3>JUGADORES EN LA SALA</h3>
+						<div id="host-bot-actions" class="hidden">
+							<button id="btn-add-bot" class="btn-small btn-bot">🤖 + Agregar Bot</button>
+							<button id="btn-remove-bot" class="btn-small btn-bot-alt">➖ Quitar Bot</button>
+						</div>
+					</div>
+					<div id="players-list" class="players-grid"></div>
+				</div>
+
+				<div id="waiting-footer">
+					<div id="waiting-controls">
+						<button id="btn-start" class="btn-primary btn-lg hidden">▶ INICIAR PARTIDA</button>
+						<button id="btn-leave-lobby" class="btn-secondary">🚪 Salir de la Sala</button>
+					</div>
+					<p id="waiting-hint" class="hint"></p>
+				</div>
+			</section>
+		</div>
+
+		<!-- Panel de Reglas & Objetivos -->
+		<div id="rules-panel" class="tab-content hidden">
+			<section id="rules-card" class="lobby-card wide-card">
+				<div class="card-header">
+					<span class="card-icon">📖</span>
+					<h2>CÓMO SE JUEGA</h2>
+				</div>
+
+				<div id="rules-grid" class="rules-grid">
+					<div class="rule-box">
+						<div class="rule-icon">🎯</div>
+						<h3>¡Equipos de Colores y tu Presa!</h3>
+						<p>¡Todos nos repartimos en <strong>equipos de colores</strong> (Rojo, Azul, Verde o Amarillo) en partes iguales para que el juego sea parejo y divertido! Si sobra algún amigo, se suma a un equipo para que nadie se quede afuera (y si solo juegan 2 o 3, cada uno tiene su propio color). Al empezar, el juego te da un <strong>color enemigo sorpresa</strong>: ¡solo le puedes hacer daño a los jugadores de ese color y tu misión es atraparlos!</p>
+						<div class="chain-diagram">
+							<span class="chip-dot red">● Rojo</span>
+							<span class="chip-dot blue">● Azul</span>
+							<span class="chip-dot green">● Verde</span>
+							<span class="chip-dot yellow">● Amarillo</span>
+						</div>
+					</div>
+
+					<div class="rule-box" id="rule-box-rounds">
+						<div class="rule-icon">⏱</div>
+						<h3>Rondas de 2 Min & 1 Porción de Vida</h3>
+						<p>Cada ronda dura <strong>2 minutos</strong>. Si al finalizar la ronda no lograste eliminar a ningún objetivo de tu color asignado, se te drenará <strong>1 porción de tu vida (34 HP)</strong> en ese instante (no continua). Si en 3 rondas consecutivas no matas a nadie, te <strong>auto-eliminas</strong> por completo. Cada 2 minutos también se vuelven a sortear y cambiar de color y de presa todos los supervivientes.</p>
+					</div>
+
+					<div class="rule-box">
+						<div class="rule-icon">💣</div>
+						<h3>Bombas Cargadas</h3>
+						<p>Mantén presionada la <strong>BARRA ESPACIADORA</strong> para cargar el alcance de la bomba. Al soltarla, se lanzará un proyectil explosivo con daño de área para limpiar a tu objetivo.</p>
+					</div>
+
+					<div class="rule-box">
+						<div class="rule-icon">🛡</div>
+						<h3>Power-Ups de Arena</h3>
+						<p>Recoge botiquines para recuperar +40 HP, burbujas protectoras para absorber cualquier ataque durante 8 segundos, o bombas adicionales repartidas por el mapa.</p>
+					</div>
+				</div>
+
+				<div id="controls-summary-box">
+					<h3>⌨ CONTROLES DE COMBATE</h3>
+					<div class="controls-row">
+						<div class="control-key-item"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>Moverse</span></div>
+						<div class="control-key-item"><kbd>Mouse</kbd><span>Apuntar</span></div>
+						<div class="control-key-item"><kbd>Click Izq.</kbd><span>Disparar proyectil</span></div>
+						<div class="control-key-item"><kbd>ESPACIO</kbd><span>Mantener = Cargar Bomba</span></div>
+						<div class="control-key-item"><kbd>ENTER</kbd><span>Abrir Chat de Sala</span></div>
+					</div>
+				</div>
+			</section>
+		</div>
+
+		<!-- Panel de Ajustes -->
+		<div id="settings-panel" class="tab-content hidden">
+			<section id="settings-card" class="lobby-card">
+				<div class="card-header">
+					<span class="card-icon">⚙</span>
+					<h2>AJUSTES DEL JUEGO</h2>
+				</div>
+
+				<div class="settings-group">
+					<label for="volume-slider">VOLUMEN DE EFECTOS & MÚSICA</label>
+					<div class="slider-row">
+						<input id="volume-slider" type="range" min="0" max="100" value="80">
+						<span id="volume-val">80%</span>
+					</div>
+				</div>
+
+				<div class="settings-group">
+					<div class="toggle-row">
+						<label for="lobby-music-toggle">Música Chill de Espera</label>
+						<input id="lobby-music-toggle" type="checkbox" checked>
+					</div>
+				</div>
+
+				<div class="settings-group">
+					<div class="toggle-row">
+						<label for="mute-toggle">Silenciar Audio General</label>
+						<input id="mute-toggle" type="checkbox">
+					</div>
+				</div>
+
+				<div class="settings-group">
+					<button id="btn-test-sound" class="btn-secondary">🔊 Probar Sonido</button>
+				</div>
+			</section>
+		</div>
+	</main>
+</div>
+
+<!-- Pantalla de Juego en Vivo -->
+<div id="game-screen" class="screen hidden">
+	<canvas id="canvas"></canvas>
+
+	<div id="hud-topleft" class="panel">
+		<div class="panel-title">🎯 TU OBJETIVO</div>
+		<div id="target-swatch-row">
+			<span id="target-swatch"></span><span id="target-name">—</span>
+		</div>
+		<div class="panel-sub">Elimínalos — solo a este color le haces daño.</div>
+	</div>
+
+	<div id="hud-topright">
+		<div id="hud-alive"></div>
+		<div id="hud-timer"></div>
+	</div>
+
+	<div id="hud-message"></div>
+	<div id="hud-penalty" class="hidden">⚠ ¡TE ESTÁS DEBILITANDO! Elimina a tu objetivo YA</div>
+
+	<div id="hud-toast" class="panel hidden"></div>
+
+	<div id="minimap-wrap">
+		<div class="panel-title small">🗺 MAPA</div>
+		<canvas id="minimap"></canvas>
+	</div>
+
+	<div id="chat-wrap" class="panel">
+		<div class="chat-header-row">
+			<span class="chat-title">💬 CHAT</span>
+			<span class="chat-key-hint">[C / TAB: Ocultar/Ver]</span>
+		</div>
+		<div id="chat-content-box">
+			<div id="chat-log"></div>
+			<input id="chat-input" type="text" maxlength="120" placeholder="ENTER para escribir...">
+		</div>
+	</div>
+
+	<div id="me-hud" class="panel">
+		<div id="me-name"></div>
+		<div class="bar-bg"><div id="me-hp-bar"></div></div>
+		<div id="me-hp-text"></div>
+		<div id="me-bomb-text"></div>
+		<div id="me-shield-text"></div>
+	</div>
+
+	<div id="hud-help">WASD: Moverse · Click: Disparar · Espacio: Bomba · C / TAB: Chat · ESC: Salir</div>
+
+	<button id="btn-leave-game" class="btn-secondary hidden">Volver al lobby</button>
+</div>
+
+<!-- Modal de Resultados / Ranking Final -->
+<div id="ranking-overlay" class="hidden">
+	<div id="ranking-box">
+		<h2>🏁 RESULTADOS FINALES</h2>
+		<div id="ranking-list"></div>
+		<button id="btn-ranking-leave" class="btn-primary">Volver al lobby</button>
+	</div>
+</div>
+
+<script src="shared/constants.js"></script>
+<script src="sound.js"></script>
+<script src="guardian.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
