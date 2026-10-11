@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rastreo GPS 🐾</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--ink:#3b3355;--mut:#8a82a3;--pink:#ff8fb1;--pinkL:#ffe3ec;--mint:#6fd6b5;--mintL:#dff8ef;--lil:#b59cff;--lilL:#eee8ff;--sh:0 8px 24px rgba(120,90,160,.15)}
+*{box-sizing:border-box}[hidden]{display:none!important}
+body{margin:0;height:100vh;display:flex;font-family:Nunito,system-ui,sans-serif;color:var(--ink);background:#fff8f3}
+aside{width:350px;max-width:44vw;display:flex;flex-direction:column;background:#fff;box-shadow:var(--sh);z-index:500;border-radius:0 28px 28px 0}
+header{padding:18px 18px 8px}.brand{display:flex;gap:10px;align-items:center}.logo{font-size:34px}
+h1{margin:0;font-size:1.3rem;font-weight:800}#estado{margin:0;font-size:.8rem;color:var(--mut)}#estado.err{color:#e0457b}
+.tabs{display:flex;gap:6px;margin-top:12px;background:var(--lilL);padding:5px;border-radius:999px}
+.tabs button{flex:1;border:0;border-radius:999px;padding:9px;font:800 .85rem Nunito;color:var(--mut);background:none;cursor:pointer}
+.tabs button.on{background:#fff;color:var(--ink);box-shadow:0 2px 8px rgba(120,90,160,.2)}
+#histPanel{margin:8px 18px;padding:12px;background:var(--lilL);border-radius:20px;display:flex;flex-direction:column;gap:8px}
+#histPanel label{font-size:.78rem;font-weight:700;display:flex;flex-direction:column;gap:3px;flex:1}
+#histPanel input{border:0;border-radius:12px;padding:8px;font:700 .9rem Nunito;background:#fff;color:var(--ink)}
+.row2,.quick{display:flex;gap:8px}
+button.chip{border:0;border-radius:999px;padding:6px 14px;font:800 .78rem Nunito;background:#fff;color:var(--ink);cursor:pointer}
+button.main{border:0;border-radius:999px;padding:11px;font:800 .95rem Nunito;background:var(--pink);color:#fff;cursor:pointer}
+.note{margin:6px 18px;padding:9px 12px;border-radius:16px;background:var(--mintL);font-size:.82rem;font-weight:700}
+.tools{display:flex;gap:6px;padding:4px 18px 8px;flex-wrap:wrap}
+#lista{flex:1;overflow-y:auto;padding:4px 14px 16px}
+.card{display:flex;align-items:center;gap:10px;padding:10px 12px;margin-bottom:8px;border-radius:20px;background:#fff8f3;border:2px solid transparent;transition:.2s}
+.card.off{opacity:.45}
+.chk input{display:none}.box{width:24px;height:24px;border-radius:9px;border:3px solid var(--c);display:block;cursor:pointer}
+.chk input:checked+.box{background:var(--c);box-shadow:inset 0 0 0 3px #fff}
+.info{flex:1;min-width:0}.nm{display:flex;align-items:center;gap:8px;font-size:.98rem}
+.sw{width:26px;height:6px;border-radius:9px;background:var(--c);flex:none}
+.info b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.info small{display:block;color:var(--mut);font-size:.76rem;margin-top:2px;font-weight:600}
+.go{border:0;background:#fff;border-radius:50%;width:34px;height:34px;cursor:pointer;font-size:16px;box-shadow:0 2px 6px rgba(120,90,160,.2)}
+.vacio{padding:18px;text-align:center;color:var(--mut)}
+#map{flex:1}
+#toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,80px);background:var(--ink);color:#fff;padding:11px 20px;border-radius:999px;font-weight:700;z-index:2000;transition:.3s}
+#toast.show{transform:translate(-50%,0)}
+/* marcador con halo animado */
+.pin{position:relative;width:0;height:0}
+.pin .core{position:absolute;left:-10px;top:-10px;width:20px;height:20px;border-radius:50%;background:var(--c);border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+.pin .halo{position:absolute;left:-24px;top:-24px;width:48px;height:48px;border-radius:50%;background:var(--c);opacity:0}
+.pin.on .halo{animation:pulso 1.6s ease-out infinite}.pin.off .core{filter:grayscale(1);opacity:.7}
+.pin .lab{position:absolute;left:16px;top:-32px;white-space:nowrap;background:#fff;padding:2px 10px;border-radius:12px;font:800 12px Nunito;box-shadow:var(--sh)}
+@keyframes pulso{0%{transform:scale(.3);opacity:.55}100%{transform:scale(1);opacity:0}}
+.emo{font-size:24px;filter:drop-shadow(0 2px 3px rgba(0,0,0,.3))}
+@media(max-width:700px){body{flex-direction:column}#map{order:1}aside{order:2;width:100%;max-width:none;height:48vh;border-radius:28px 28px 0 0}}
+</style>
+</head>
+<body>
+<aside>
+  <header>
+    <div class="brand"><span class="logo">🐾</span><div><h1>Rastreo GPS</h1><p id="estado">Conectando…</p></div></div>
+    <div class="tabs"><button id="tabLive" class="on">🔴 En vivo</button><button id="tabHist">📅 Registro</button></div>
+  </header>
+  <section id="histPanel" hidden>
+    <div class="quick"><button class="chip" id="qHoy">Hoy</button><button class="chip" id="qAyer">Ayer</button></div>
+    <label>📅 Fecha<input type="date" id="fecha"></label>
+    <div class="row2"><label>🌅 Desde<input type="time" id="hini" value="00:00"></label><label>🌙 Hasta<input type="time" id="hfin" value="23:59"></label></div>
+    <button class="main" id="buscar">Buscar recorrido 🔍</button>
+  </section>
+  <div class="note" id="nota">📅 Mostrando <b>hoy</b> · se reinicia a las 00:00 🌙</div>
+  <div class="tools"><button class="chip" id="bTodos">✅ Todos</button><button class="chip" id="bNinguno">⬜ Ninguno</button><button class="chip" id="bFit">🔭 Encuadrar</button></div>
+  <div id="lista"></div>
+  <div class="vacio" id="vacio">🐣 Aún no hay celulares.<br>Abre la app y regístrate: aparecerá aquí al instante.</div>
+</aside>
+<div id="map"></div>
+<div id="toast"></div>
+
+<script>
+// ====== CONFIGURACIÓN: cambia estos 2 valores ======
+const API_URL = "https://i798okxnf8.execute-api.us-east-2.amazonaws.com/prod";
+const API_KEY = "";   // vacío = sin API Key
+// ===================================================
+const TICK_MS = 1000;        // consulta cada segundo
+const ONLINE_MS = 15000;     // sin reportar >15 s = desconectado
+const COLORS = ["#ff6fa5","#3fbf9b","#8f7bff","#ff9f3d","#4db6ff","#ff7b6b","#8cc63f","#e05bd0"];
+
+const $ = s => document.querySelector(s);
+const map = L.map("map", {zoomControl:false}).setView([-13.5319,-71.9675], 14);
+L.control.zoom({position:"bottomright"}).addTo(map);
+L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+  {maxZoom:19, attribution:"© OpenStreetMap"}).addTo(map);
+
+const devs = {};               // id -> estado de cada celular
+let mode = "live", colorIdx = 0, busy = false, firstFit = true;
+let dayKey = new Date().toDateString();
+let H = null;                  // parámetros de la búsqueda de registro
+
+// ---------- utilidades ----------
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const hav = (a,b) => { const r=Math.PI/180, R=6371000, dl=(b[0]-a[0])*r, dn=(b[1]-a[1])*r;
+  const x=Math.sin(dl/2)**2+Math.cos(a[0]*r)*Math.cos(b[0]*r)*Math.sin(dn/2)**2; return 2*R*Math.asin(Math.sqrt(x)); };
+const startOfDay = () => { const d=new Date(); d.setHours(0,0,0,0); return d; };
+const dateInput = d => d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+const hace = iso => { const s=Math.max(0,(Date.now()-Date.parse(iso))/1000); return s<60?Math.round(s)+" s":s<3600?Math.round(s/60)+" min":Math.round(s/3600)+" h"; };
+function toast(m){ const t=$("#toast"); t.textContent=m; t.classList.add("show"); clearTimeout(toast.h); toast.h=setTimeout(()=>t.classList.remove("show"),3200); }
+function setStatus(t, ok=true){ const e=$("#estado"); e.textContent=t; e.className=ok?"":"err"; }
+async function api(path){ const r=await fetch(API_URL+path,{headers:API_KEY?{"x-api-key":API_KEY}:{}}); if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); }
+
+// ---------- celulares ----------
+function ensureDevice(m){
+  let d = devs[m.device_id];
+  if(!d) d = devs[m.device_id] = {id:m.device_id, color:COLORS[colorIdx++%COLORS.length], visible:true,
+      pts:[], km:0, lastTs:null, last:null, loaded:false, drawn:0, hpts:[], hkm:0, hkey:""};
+  d.nombre = m.nombre || m.device_id;
+  d.battery = m.last_battery; d.ultima = m.ultima_conexion;
+  d.online = Date.now() - Date.parse(m.ultima_conexion) < ONLINE_MS;
+  d.pos = m.last_lat != null ? [m.last_lat, m.last_lon] : null;   // el punto se ve apenas el celular se registra
+}
+// agrega un punto al recorrido (ignora ruido: precisión >40 m o movimiento <3 m)
+function addPoint(d, p){
+  if(d.lastTs && p.timestamp <= d.lastTs) return;
+  d.lastTs = p.timestamp;
+  if(p.accuracy > 40) return;
+  const pt=[p.lat,p.lon];
+  if(!d.last || hav(d.last,pt) > 3){ if(d.last) d.km += hav(d.last,pt)/1000; d.last=pt; d.pts.push(pt); }
+}
+async function loadLive(d){
+  const q = new URLSearchParams();
+  if(!d.loaded){ q.set("from", startOfDay().toISOString()); q.set("step","3"); q.set("limit","20000"); }   // hoy completo
+  else { q.set("from", d.lastTs || startOfDay().toISOString()); q.set("limit","500"); }                    // solo lo nuevo
+  (await api("/locations/"+encodeURIComponent(d.id)+"?"+q)).forEach(p=>addPoint(d,p));
+  d.loaded = true;
+}
+function resetLive(){ Object.values(devs).forEach(d=>{ d.pts=[]; d.km=0; d.lastTs=null; d.last=null; d.loaded=false; d.drawn=0; if(d.line) d.line.setLatLngs([]); }); }
+
+// ---------- dibujo en vivo ----------
+const iconFor = d => L.divIcon({className:"", iconSize:[0,0],
+  html:`<div class="pin ${d.online?"on":"off"}" style="--c:${d.color}"><i class="halo"></i><i class="core"></i><b class="lab">${esc(d.nombre)}</b></div>`});
+const emo = e => L.divIcon({className:"", html:`<div class="emo">${e}</div>`, iconSize:[28,28], iconAnchor:[14,14]});
+function animate(d, to){            // desliza el marcador suavemente durante 0,9 s
+  const g=d.marker.getLatLng(), from=[g.lat,g.lng], t0=performance.now(); d.cur=to; cancelAnimationFrame(d.raf);
+  const step = now => { const k=Math.min(1,(now-t0)/900); d.marker.setLatLng([from[0]+(to[0]-from[0])*k, from[1]+(to[1]-from[1])*k]); if(k<1) d.raf=requestAnimationFrame(step); };
+  d.raf = requestAnimationFrame(step);
+}
+function syncLine(d){               // agrega solo los puntos nuevos (rápido)
+  if(d.drawn===0 || d.drawn>d.pts.length){ d.line.setLatLngs(d.pts); d.drawn=d.pts.length; return; }
+  for(; d.drawn<d.pts.length; d.drawn++) d.line.addLatLng(d.pts[d.drawn]);
+}
+function removeLive(d){ [d.marker,d.line].forEach(l=>l&&map.hasLayer(l)&&map.removeLayer(l)); d.drawn=0; }
+function drawLive(d){
+  if(!d.visible || !d.pos){ removeLive(d); return; }
+  const sig = d.online+"|"+d.nombre;
+  if(!d.marker){ d.marker=L.marker(d.pos,{icon:iconFor(d),zIndexOffset:1000}); d.sig=sig; d.cur=d.pos; }
+  if(!map.hasLayer(d.marker)){ d.marker.setLatLng(d.pos); d.marker.addTo(map); d.cur=d.pos; }
+  if(d.sig!==sig){ d.marker.setIcon(iconFor(d)); d.sig=sig; }
+  if(!d.cur || d.cur[0]!==d.pos[0] || d.cur[1]!==d.pos[1]) animate(d, d.pos);
+  if(!d.line) d.line=L.polyline([],{color:d.color,weight:5,opacity:.9,lineCap:"round",lineJoin:"round"});
+  if(!map.hasLayer(d.line)){ d.line.addTo(map); d.drawn=0; }
+  syncLine(d);
+}
+
+// ---------- lista lateral ----------
+function makeCard(d){
+  const el=document.createElement("div"); el.className="card"; el.style.setProperty("--c",d.color);
+  el.innerHTML=`<label class="chk"><input type="checkbox" checked><span class="box"></span></label>
+    <div class="info"><div class="nm"><i class="sw"></i><b></b></div><small></small></div><button class="go" title="Ir al celular">📍</button>`;
+  el.querySelector("input").onchange = e => { d.visible=e.target.checked; refreshVis(); };
+  el.querySelector(".go").onclick = () => focusDev(d);
+  $("#lista").appendChild(el); d.card=el;
+}
+function renderCards(){
+  Object.values(devs).forEach(d=>{
+    if(!d.card) makeCard(d);
+    const km = mode==="live" ? d.km : d.hkm;
+    d.card.querySelector("b").textContent = d.nombre;
+    d.card.querySelector("small").textContent =
+      (d.online ? "🟢 En línea" : "⚪ Desconectado"+(d.ultima?" · hace "+hace(d.ultima):""))+
+      " · 🔋 "+(d.battery>=0?d.battery+"%":"n/d")+" · 🐾 "+km.toFixed(2)+" km";
+    d.card.classList.toggle("off", !d.visible);
+  });
+  $("#vacio").hidden = Object.keys(devs).length>0;
+}
+function refreshVis(){ if(mode==="live"){ Object.values(devs).forEach(drawLive); tick(); } else applyHist(); }
+function focusDev(d){
+  if(mode==="live" && d.pos) map.flyTo(d.pos,17,{duration:.8});
+  else if(d.hpts.length) map.fitBounds(L.latLngBounds(d.hpts),{padding:[60,60],maxZoom:18});
+}
+function fitAll(){
+  const pts = Object.values(devs).filter(d=>d.visible).flatMap(d => mode==="live" ? (d.pos?[d.pos]:[]) : d.hpts);
+  if(!pts.length) return false;
+  map.fitBounds(L.latLngBounds(pts),{padding:[70,70],maxZoom:17}); return true;
+}
+
+// ---------- ciclo en vivo (1 vez por segundo) ----------
+async function tick(){
+  if(busy) return; busy=true;
+  try{
+    const now=new Date();
+    if(now.toDateString()!==dayKey){ dayKey=now.toDateString(); resetLive(); if(mode==="live") toast("🌙 Nuevo día: se reinició el recorrido"); }
+    const list = await api("/devices");
+    if(!Array.isArray(list)) throw new Error("la API no devolvió una lista: ¿la Lambda tiene el código nuevo?");
+    list.forEach(ensureDevice);
+    setStatus(list.length+" celular(es) · "+now.toLocaleTimeString());
+    if(mode==="live"){
+      await Promise.all(Object.values(devs).filter(d=>d.visible).map(d=>loadLive(d).catch(()=>{})));
+      Object.values(devs).forEach(drawLive);
+      if(firstFit && fitAll()) firstFit=false;
+    }
+    renderCards();
+  }catch(e){ setStatus("Sin conexión con la API ("+e.message+")", false); }
+  finally{ busy=false; }
+}
+
+// ---------- registro (días y horas anteriores) ----------
+async function loadHist(d){
+  if(d.hkey===H.key) return;
+  const q=new URLSearchParams({from:H.from.toISOString(), to:H.to.toISOString(), step:H.step, limit:"20000"});
+  const pts=await api("/locations/"+encodeURIComponent(d.id)+"?"+q);
+  d.hpts=[]; d.hkm=0; let last=null;
+  pts.forEach(p=>{ if(p.accuracy>40) return; const pt=[p.lat,p.lon];
+    if(!last||hav(last,pt)>3){ if(last) d.hkm+=hav(last,pt)/1000; last=pt; d.hpts.push(pt); } });
+  d.hkey=H.key;
+}
+function removeHist(d){ [d.hline,d.hstart,d.hend].forEach(l=>l&&map.hasLayer(l)&&map.removeLayer(l)); }
+function drawHist(d){
+  removeHist(d);
+  if(!d.visible || !d.hpts.length) return;
+  if(d.hpts.length>1) d.hline=L.polyline(d.hpts,{color:d.color,weight:5,opacity:.9}).addTo(map);
+  d.hstart=L.marker(d.hpts[0],{icon:emo("🚩")}).addTo(map).bindTooltip(esc(d.nombre)+" · inicio");
+  d.hend=L.marker(d.hpts[d.hpts.length-1],{icon:emo("🏁")}).addTo(map).bindTooltip(esc(d.nombre)+" · fin");
+}
+async function applyHist(){
+  await Promise.all(Object.values(devs).filter(d=>d.visible).map(d=>loadHist(d).catch(()=>toast("Error cargando "+d.nombre))));
+  Object.values(devs).forEach(drawHist); renderCards();
+}
+async function runHist(){
+  const f=$("#fecha").value; if(!f) return toast("Elige una fecha 📅");
+  const from=new Date(f+"T"+($("#hini").value||"00:00")+":00"), to=new Date(f+"T"+($("#hfin").value||"23:59")+":59");
+  if(!(to>from)) return toast("La hora final debe ser mayor que la inicial ⏰");
+  H={from,to,step:Math.max(1,Math.ceil((to-from)/1000/10000)),key:from.toISOString()+"|"+to.toISOString()};
+  setMode("hist");
+  await applyHist();
+  if(!fitAll()) toast("No hay recorridos en ese horario 🐣");
+}
+function setMode(m){
+  mode=m;
+  $("#tabLive").classList.toggle("on",m==="live"); $("#tabHist").classList.toggle("on",m==="hist");
+  $("#histPanel").hidden = m!=="hist";
+  Object.values(devs).forEach(d=>{ if(m==="live") removeHist(d); else removeLive(d); });
+  $("#nota").innerHTML = m==="live" ? "📅 Mostrando <b>hoy</b> · se reinicia a las 00:00 🌙"
+     : "🗓️ Viendo el <b>registro</b>: el modo en vivo está en pausa";
+  if(m==="live"){ firstFit=true; tick(); }
+}
+
+// ---------- eventos ----------
+$("#tabLive").onclick = () => setMode("live");
+$("#tabHist").onclick = () => { $("#histPanel").hidden=false; $("#tabHist").classList.add("on"); $("#tabLive").classList.remove("on"); };
+$("#buscar").onclick = runHist;
+$("#qHoy").onclick = () => $("#fecha").value=dateInput(new Date());
+$("#qAyer").onclick = () => $("#fecha").value=dateInput(new Date(Date.now()-864e5));
+$("#bTodos").onclick = () => { Object.values(devs).forEach(d=>{d.visible=true; d.card.querySelector("input").checked=true;}); refreshVis(); };
+$("#bNinguno").onclick = () => { Object.values(devs).forEach(d=>{d.visible=false; d.card.querySelector("input").checked=false;}); refreshVis(); };
+$("#bFit").onclick = () => fitAll();
+$("#fecha").value = dateInput(new Date()); $("#fecha").max = dateInput(new Date());
+
+tick(); setInterval(tick, TICK_MS);
+</script>
+</body>
+</html>
