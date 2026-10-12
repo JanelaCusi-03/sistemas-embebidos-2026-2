@@ -1,0 +1,780 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Batea al Pulpo</title>
+<style>
+  /* ---------- ESTILOS GENERALES ---------- */
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: #0f172a;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    color: #e2e8f0;
+  }
+  canvas {
+    width: min(900px, 98vw);       /* se adapta a cualquier pantalla */
+    height: auto;
+    border: 3px solid #fff;
+    border-radius: 14px;
+    box-shadow: 0 0 30px rgba(56,189,248,0.35);
+    touch-action: none;            /* evita el scroll al tocar en moviles */
+    cursor: none;
+  }
+  p { font-size: 13px; opacity: 0.7; margin: 10px 0 0; text-align: center; }
+</style>
+</head>
+<body>
+
+<canvas id="lienzo" width="800" height="560"></canvas>
+<p>Mueve el mouse (o usa las flechas ← →) para devolver los objetos con tu varita</p>
+
+<script>
+/* =========================================================
+   JUEGO: BATEA AL PULPO
+   - Un pulpo gigante lanza 2 o 3 objetos distintos desde el mar.
+   - Tu gato los devuelve con una varita; cada objeto le baja
+     un % diferente de vida al pulpo.
+   - Si se cae un objeto en la arena pierdes un corazon (3 vidas).
+   - Empieza lento y se acelera con el tiempo.
+   - El pulpo tiene MUCHA vida: un jugador perfecto tarda unos
+     15-16 minutos en vencerlo (y mas si falla algun objeto).
+   Tecnologia: HTML5 Canvas + JavaScript puro (sin librerias)
+   Autor: (coloca aqui tu nombre para la entrega)
+   ========================================================= */
+
+// ---------- 1. CONFIGURACION BASICA ----------
+const lienzo = document.getElementById('lienzo');
+const ctx = lienzo.getContext('2d');
+const W = 800;              // ancho logico del juego
+const H = 560;              // alto logico del juego
+const TAU = Math.PI * 2;
+
+// Posiciones verticales importantes de la escena
+const Y_LINEA_AGUA = 152;   // el pulpo "sale" del agua en esta linea
+const Y_ORIGEN = 112;       // altura desde donde el pulpo lanza los objetos
+const Y_BATE = 480;         // altura donde caen los objetos en la arena
+const Y_GATO = 498;         // altura de los pies del gato
+const ZONA_GOLPE = 72;      // que tan ancho es el alcance de la varita
+
+// ---------- 2. AJUSTES DE DIFICULTAD (puedes modificarlos) ----------
+// Modo demo: agrega ?demo al final de la URL para que el pulpo muera en ~40 segundos
+// (muy util para grabar el video o exponer en clase).
+const MODO_DEMO = location.search.includes('demo');
+const MULT_DANO = MODO_DEMO ? 25 : 1;
+// Cada cuantos aciertos SEGUIDOS recuperas un corazon (0 = nunca recuperar vidas)
+const RACHA_PARA_VIDA = 50;
+
+// ---------- 3. TIPOS DE OBJETOS ----------
+// Cada objeto le quita un % distinto al pulpo (vida total = 100%).
+const TIPOS = [
+  { id: 'piedra', nombre: 'Piedra', dano: 0.05 },
+  { id: 'barril', nombre: 'Barril', dano: 0.10 },
+  { id: 'bomba',  nombre: 'Bomba',  dano: 0.15 }
+];
+
+// ---------- 4. ESTADO DEL JUEGO ----------
+let estado = 'inicio';      // 'inicio' | 'jugando' | 'derrota' | 'victoria'
+let vidas = 3, vidaPulpo = 100, tiempo = 0, aciertos = 0, racha = 0;
+let objetos = [];           // objetos en el aire
+let pendientes = [];        // objetos que el pulpo esta por lanzar
+let proxVolley = 1.5;       // cuenta regresiva para el siguiente grupo
+let ultimoTx = W / 2;       // ultima posicion de caida (para que sea justo)
+let particulas = [];        // humo, polvo y chispas
+let textos = [];            // textos flotantes ("-0.10%")
+let destelloRojo = 0;
+let reloj = 0;              // reloj visual (siempre avanza, para animaciones)
+
+// ---------- 5. PERSONAJES ----------
+const pulpo = { x: W / 2, y: 100, fase: 0, lanza: 0, herido: 0 };
+const gato  = { x: W / 2, swing: 0, direccion: 0 };
+
+// ---------- 6. UTILIDADES ----------
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const formatoTiempo = (t) => {
+  const m = Math.floor(t / 60), s = Math.floor(t % 60);
+  return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+};
+
+// Sonidos simples generados por codigo (sin archivos externos)
+let audioCtx = null;
+function pitido(frecuencia, duracion, tipo = 'square') {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = audioCtx.createOscillator();
+    const vol = audioCtx.createGain();
+    osc.type = tipo;
+    osc.frequency.value = frecuencia;
+    vol.gain.value = 0.07;
+    osc.connect(vol);
+    vol.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + duracion);
+  } catch (e) { /* si el navegador bloquea el audio, el juego sigue igual */ }
+}
+
+// ---------- 7. DIFICULTAD PROGRESIVA ----------
+// d va de 0 (inicio, lento) a 1 (a los 10 minutos, velocidad maxima) y ahi se queda.
+function dificultad() { return Math.min(tiempo / 600, 1); }
+
+// =========================================================
+//  FONDO ESTATICO (cielo, colinas, mar y playa)
+//  Se dibuja UNA sola vez en un canvas oculto para ir mas rapido.
+// =========================================================
+function nube(c, x, y, s) {
+  c.save(); c.translate(x, y); c.scale(s, s);
+  c.fillStyle = '#ffffff';
+  c.beginPath(); c.ellipse(0, 0, 60, 16, 0, 0, TAU); c.fill();
+  c.beginPath(); c.ellipse(-25, -8, 30, 16, 0, 0, TAU); c.fill();
+  c.beginPath(); c.ellipse(15, -12, 34, 20, 0, 0, TAU); c.fill();
+  c.restore();
+}
+
+function estrella(c, x, y, r, relleno, borde, rot = 0) {
+  c.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const ang = rot - Math.PI / 2 + i * Math.PI / 5;
+    const rr = i % 2 === 0 ? r : r * 0.45;
+    const px = x + Math.cos(ang) * rr, py = y + Math.sin(ang) * rr;
+    if (i === 0) c.moveTo(px, py); else c.lineTo(px, py);
+  }
+  c.closePath();
+  c.fillStyle = relleno; c.fill();
+  if (borde) { c.strokeStyle = borde; c.lineWidth = 1.5; c.stroke(); }
+}
+
+function castillo(c, x, y) {
+  c.fillStyle = '#e8c78a'; c.strokeStyle = '#c49b5a'; c.lineWidth = 2;
+  c.fillRect(x - 35, y - 28, 70, 28); c.strokeRect(x - 35, y - 28, 70, 28);
+  [-30, 12].forEach(dx => {
+    c.fillRect(x + dx, y - 52, 22, 26); c.strokeRect(x + dx, y - 52, 22, 26);
+    for (let i = 0; i < 3; i++) c.fillRect(x + dx + i * 8, y - 58, 6, 7);
+  });
+  c.fillStyle = '#c49b5a';
+  c.beginPath(); c.arc(x, y, 9, Math.PI, 0); c.fill();
+}
+
+function caracola(c, x, y, s, color) {
+  c.save(); c.translate(x, y); c.scale(s, s); c.rotate(-0.4);
+  c.fillStyle = color; c.strokeStyle = '#b0764a'; c.lineWidth = 1.5;
+  c.beginPath(); c.moveTo(-12, 8); c.lineTo(0, -22); c.lineTo(12, 8);
+  c.quadraticCurveTo(0, 16, -12, 8); c.closePath(); c.fill(); c.stroke();
+  c.beginPath(); c.moveTo(-8, 0); c.lineTo(8, 0); c.moveTo(-5, -9); c.lineTo(5, -9); c.stroke();
+  c.restore();
+}
+
+function crearFondo() {
+  const off = document.createElement('canvas');
+  off.width = W; off.height = H;
+  const c = off.getContext('2d');
+  let g;
+
+  // Cielo
+  g = c.createLinearGradient(0, 0, 0, 145);
+  g.addColorStop(0, '#5ec2ee'); g.addColorStop(1, '#d8f3fb');
+  c.fillStyle = g; c.fillRect(0, 0, W, 150);
+  nube(c, 190, 38, 1.2); nube(c, 430, 22, 0.8); nube(c, 650, 58, 1.0); nube(c, 60, 95, 0.7);
+
+  // Colinas lejanas
+  c.fillStyle = '#7cc0cf';
+  c.beginPath(); c.moveTo(420, 148); c.bezierCurveTo(480, 105, 560, 92, 650, 112);
+  c.bezierCurveTo(720, 125, 770, 112, 800, 118); c.lineTo(800, 148); c.closePath(); c.fill();
+  c.fillStyle = '#5aa9bd';
+  c.beginPath(); c.moveTo(560, 148); c.bezierCurveTo(620, 125, 720, 128, 800, 100);
+  c.lineTo(800, 148); c.closePath(); c.fill();
+  c.fillStyle = '#8fcab8';
+  c.beginPath(); c.moveTo(0, 148); c.bezierCurveTo(60, 125, 140, 118, 230, 140);
+  c.lineTo(250, 148); c.closePath(); c.fill();
+
+  // Mar
+  g = c.createLinearGradient(0, 140, 0, 365);
+  g.addColorStop(0, '#c4f4f6'); g.addColorStop(0.2, '#56d6ee');
+  g.addColorStop(0.65, '#1fa9d8'); g.addColorStop(0.88, '#4fbfc0'); g.addColorStop(1, '#9bd3a8');
+  c.fillStyle = g; c.fillRect(0, 140, W, 230);
+
+  // Arena
+  g = c.createLinearGradient(0, 350, 0, H);
+  g.addColorStop(0, '#e6c68a'); g.addColorStop(1, '#f5deaa');
+  c.fillStyle = g;
+  c.beginPath(); c.moveTo(0, 372); c.bezierCurveTo(200, 345, 420, 385, W, 350);
+  c.lineTo(W, H); c.lineTo(0, H); c.closePath(); c.fill();
+
+  // Dunas suaves
+  c.strokeStyle = 'rgba(190,150,90,0.35)'; c.lineWidth = 3; c.lineCap = 'round';
+  [[0, 420, 300, 405, 560, 430], [220, 520, 480, 495, 800, 525], [0, 520, 150, 505, 280, 535]].forEach(p => {
+    c.beginPath(); c.moveTo(p[0], p[1]); c.quadraticCurveTo(p[2], p[3], p[4], p[5]); c.stroke();
+  });
+
+  // Decoracion de la playa
+  castillo(c, 255, 470);
+  caracola(c, 330, 410, 0.8, '#fff1dc');
+  caracola(c, 745, 395, 0.9, '#f2a96b');
+  estrella(c, 690, 450, 18, '#ffffff', '#c9b79a', 0.3);
+  c.fillStyle = '#e9a3a3'; c.strokeStyle = '#b86b6b'; c.lineWidth = 1.5;
+  c.beginPath(); c.ellipse(660, 505, 16, 11, 0, Math.PI, 0); c.fill(); c.stroke();
+  c.beginPath(); c.ellipse(730, 520, 14, 9, 0, Math.PI, 0); c.fill(); c.stroke();
+  return off;
+}
+const fondo = crearFondo();
+
+// Olas animadas encima del mar
+function dibujarOlas() {
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 2;
+  for (let i = 0; i < 7; i++) {
+    const y = 178 + i * 26;
+    ctx.beginPath();
+    for (let x = 0; x <= W; x += 20) {
+      const yy = y + Math.sin(x * 0.02 + reloj * 1.2 + i) * 3;
+      if (x === 0) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
+    }
+    ctx.stroke();
+  }
+  // espuma en la orilla
+  ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = 4;
+  ctx.beginPath();
+  for (let x = 0; x <= W; x += 20) {
+    const yy = 352 + Math.sin(x * 0.015 + reloj * 1.5) * 5 + (x / W) * 8;
+    if (x === 0) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
+  }
+  ctx.stroke();
+}
+
+// =========================================================
+//  DIBUJO DEL PULPO
+// =========================================================
+// Punto de una curva cuadratica (sirve para poner ventosas y vendas)
+function ptCuad(a, b, c, t) {
+  const u = 1 - t;
+  return { x: u * u * a.x + 2 * u * t * b.x + t * t * c.x,
+           y: u * u * a.y + 2 * u * t * b.y + t * t * c.y };
+}
+
+// Definicion de los 4 tentaculos (coordenadas relativas al centro del pulpo)
+const TENTACULOS = [
+  { a: { x: -32, y: 38 }, b: { x: -92, y: 12 },  c: { x: -78, y: -62 }, venda: 0.62 },
+  { a: { x: -42, y: 46 }, b: { x: -110, y: 40 }, c: { x: -132, y: 0 },  venda: 0.5 },
+  { a: { x: 32, y: 38 },  b: { x: 94, y: 8 },    c: { x: 84, y: -64 },  venda: 0.62 },
+  { a: { x: 42, y: 46 },  b: { x: 84, y: 44 },   c: { x: 72, y: 12 },   venda: 0.5 }
+];
+
+function dibujarPulpo() {
+  const sacudida = pulpo.herido > 0 ? (Math.random() - 0.5) * 8 * pulpo.herido : 0;
+  ctx.save();
+  // Recortamos para que la parte de abajo quede "dentro del agua"
+  ctx.beginPath(); ctx.rect(0, 0, W, Y_LINEA_AGUA); ctx.clip();
+  ctx.translate(pulpo.x + sacudida, pulpo.y);
+  const esc = 1 + pulpo.lanza * 0.08;     // se agranda un poco al lanzar
+  ctx.scale(esc, esc);
+  ctx.lineCap = 'round';
+
+  // Cuerpo bajo la cabeza
+  ctx.fillStyle = '#e07ad0'; ctx.strokeStyle = '#7d2f78'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.ellipse(0, 40, 42, 32, 0, 0, TAU); ctx.fill(); ctx.stroke();
+
+  // Tentaculos con ventosas y vendas
+  TENTACULOS.forEach((t, i) => {
+    const c2 = {
+      x: t.c.x + Math.sin(reloj * 2.2 + i * 1.7) * 7,
+      y: t.c.y + Math.cos(reloj * 1.8 + i) * 5 - (i === 2 ? pulpo.lanza * 18 : 0)
+    };
+    ctx.beginPath(); ctx.moveTo(t.a.x, t.a.y); ctx.quadraticCurveTo(t.b.x, t.b.y, c2.x, c2.y);
+    ctx.strokeStyle = '#7d2f78'; ctx.lineWidth = 24; ctx.stroke();
+    ctx.strokeStyle = '#e07ad0'; ctx.lineWidth = 18; ctx.stroke();
+    // ventosas
+    [0.72, 0.85, 0.95].forEach(k => {
+      const p = ptCuad(t.a, t.b, c2, k);
+      ctx.beginPath(); ctx.arc(p.x, p.y, 3.5, 0, TAU);
+      ctx.fillStyle = '#f7cdf0'; ctx.fill();
+    });
+    // venda
+    const pv = ptCuad(t.a, t.b, c2, t.venda);
+    const tx = 2 * (1 - t.venda) * (t.b.x - t.a.x) + 2 * t.venda * (c2.x - t.b.x);
+    const ty = 2 * (1 - t.venda) * (t.b.y - t.a.y) + 2 * t.venda * (c2.y - t.b.y);
+    ctx.save(); ctx.translate(pv.x, pv.y); ctx.rotate(Math.atan2(ty, tx));
+    ctx.fillStyle = '#f3e3c3'; ctx.strokeStyle = '#b89a6a'; ctx.lineWidth = 1.5;
+    ctx.fillRect(-6, -11, 12, 22); ctx.strokeRect(-6, -11, 12, 22);
+    ctx.restore();
+  });
+
+  // Cabeza
+  ctx.fillStyle = '#e07ad0'; ctx.strokeStyle = '#7d2f78'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(0, 0, 46, 0, TAU); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.18)';
+  ctx.beginPath(); ctx.ellipse(-14, -22, 16, 9, -0.5, 0, TAU); ctx.fill();
+  // antena
+  ctx.strokeStyle = '#7d2f78'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(-6, -46); ctx.lineTo(-3, -58); ctx.stroke();
+  ctx.fillStyle = '#7d2f78'; ctx.beginPath(); ctx.arc(-3, -59, 3, 0, TAU); ctx.fill();
+  // cicatriz en forma de estrella
+  estrella(ctx, 24, -20, 11, '#f7cdf0', '#b05fa6', 0.2);
+  // ojos molestos
+  ctx.strokeStyle = '#4a1346'; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(-26, -8); ctx.lineTo(-10, -2); ctx.moveTo(-26, 2); ctx.lineTo(-10, -2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(26, -8); ctx.lineTo(10, -2); ctx.moveTo(26, 2); ctx.lineTo(10, -2); ctx.stroke();
+  // boca (mas abierta al lanzar o al recibir dano)
+  const boca = 8 + pulpo.lanza * 6 + pulpo.herido * 5;
+  ctx.fillStyle = '#5b1a56';
+  ctx.beginPath(); ctx.ellipse(0, 18, 11, boca, 0, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#ef8fb0';
+  ctx.beginPath(); ctx.ellipse(0, 18 + boca * 0.4, 6, boca * 0.4, 0, 0, TAU); ctx.fill();
+  // tinte rojo cuando recibe dano
+  if (pulpo.herido > 0) {
+    ctx.fillStyle = 'rgba(255,40,40,' + (0.4 * pulpo.herido) + ')';
+    ctx.beginPath(); ctx.arc(0, 0, 46, 0, TAU); ctx.fill();
+  }
+  ctx.restore();
+
+  // Ondas del agua alrededor del pulpo
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.ellipse(pulpo.x, Y_LINEA_AGUA + 2, 105 + Math.sin(reloj * 2) * 5, 11, 0, 0, TAU); ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+  ctx.beginPath(); ctx.ellipse(pulpo.x, Y_LINEA_AGUA + 7, 138 + Math.sin(reloj * 2 + 1) * 6, 16, 0, 0, TAU); ctx.stroke();
+}
+
+// =========================================================
+//  DIBUJO DEL GATO CON VARITA
+// =========================================================
+function dibujarGato() {
+  ctx.save();
+  ctx.translate(gato.x, Y_GATO);
+  ctx.scale(1.15, 1.15);
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  const borde = '#8f887c', pelo = '#fbf8ef';
+
+  // sombra en la arena
+  ctx.fillStyle = 'rgba(120,90,40,0.25)';
+  ctx.beginPath(); ctx.ellipse(0, 2, 30, 7, 0, 0, TAU); ctx.fill();
+
+  // cola (se mueve suavemente)
+  ctx.beginPath(); ctx.moveTo(-14, -14);
+  ctx.quadraticCurveTo(-44, -18, -34, -44 + Math.sin(reloj * 3) * 4);
+  ctx.strokeStyle = borde; ctx.lineWidth = 9; ctx.stroke();
+  ctx.strokeStyle = pelo;  ctx.lineWidth = 6; ctx.stroke();
+
+  // cuerpo
+  ctx.fillStyle = pelo; ctx.strokeStyle = borde; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.ellipse(0, -30, 20, 30, 0, 0, TAU); ctx.fill(); ctx.stroke();
+  // patitas
+  ctx.beginPath(); ctx.ellipse(-9, -2, 8, 5, 0, 0, TAU); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.ellipse(9, -2, 8, 5, 0, 0, TAU); ctx.fill(); ctx.stroke();
+
+  // orejas
+  ctx.beginPath(); ctx.moveTo(-17, -76); ctx.lineTo(-14, -97); ctx.lineTo(-3, -85); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(17, -76); ctx.lineTo(14, -97); ctx.lineTo(3, -85); ctx.closePath(); ctx.fill(); ctx.stroke();
+  // cabeza (vista de espaldas)
+  ctx.beginPath(); ctx.arc(0, -68, 19, 0, TAU); ctx.fill(); ctx.stroke();
+
+  // brazo + varita con estrella (gira al golpear)
+  ctx.save();
+  ctx.translate(15, -44);
+  ctx.rotate(-0.25 - gato.swing * 1.4 + Math.sin(reloj * 4) * 0.03);
+  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(20, 0);
+  ctx.strokeStyle = borde; ctx.lineWidth = 9; ctx.stroke();
+  ctx.strokeStyle = pelo;  ctx.lineWidth = 6; ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(16, 0); ctx.lineTo(66, 0);
+  ctx.strokeStyle = '#c99a52'; ctx.lineWidth = 4; ctx.stroke();
+  estrella(ctx, 73, 0, 10, '#fde047', '#d4a017', reloj * 2);
+  ctx.restore();
+
+  ctx.restore();
+}
+
+// =========================================================
+//  DIBUJO DE LOS OBJETOS (se dibujan con codigo, sin imagenes)
+// =========================================================
+const RADIOS_PIEDRA = [20, 17, 21, 18, 22, 16, 20, 18];
+
+function dibujarObjeto(tipo, x, y, escala, giro) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(escala, escala);
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+
+  if (tipo.id === 'barril') {
+    // Barril marron atado con cuerda (como en el juego original)
+    ctx.rotate(Math.sin(giro * 0.5) * 0.4);
+    ctx.fillStyle = '#8a5a30'; ctx.strokeStyle = '#3f2512'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.ellipse(0, 0, 23, 20, 0, 0, TAU); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = '#a97444'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(-8, -18); ctx.lineTo(-8, 18); ctx.moveTo(8, -18); ctx.lineTo(8, 18); ctx.stroke();
+    ctx.strokeStyle = '#e0b36a'; ctx.lineWidth = 3.5;
+    ctx.beginPath(); ctx.moveTo(-19, -12); ctx.lineTo(19, 12); ctx.moveTo(-19, 12); ctx.lineTo(19, -12); ctx.stroke();
+  } else if (tipo.id === 'bomba') {
+    // Bomba negra con mecha encendida
+    ctx.rotate(Math.sin(giro * 0.6) * 0.3);
+    ctx.fillStyle = '#1f2937'; ctx.strokeStyle = '#000'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(0, 2, 20, 0, TAU); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.beginPath(); ctx.arc(-7, -5, 5, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#6b7280'; ctx.fillRect(-6, -24, 12, 7);
+    ctx.strokeStyle = '#a16207'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(0, -24); ctx.quadraticCurveTo(8, -32, 12, -34); ctx.stroke();
+    ctx.fillStyle = Math.random() < 0.5 ? '#fb923c' : '#fde047';
+    ctx.beginPath(); ctx.arc(13, -35, 4 + Math.random() * 2, 0, TAU); ctx.fill();
+  } else {
+    // Piedra gris irregular que va girando
+    ctx.rotate(giro);
+    ctx.fillStyle = '#9ca3af'; ctx.strokeStyle = '#4b5563'; ctx.lineWidth = 3;
+    ctx.beginPath();
+    RADIOS_PIEDRA.forEach((r, i) => {
+      const ang = i * TAU / RADIOS_PIEDRA.length;
+      const px = Math.cos(ang) * r, py = Math.sin(ang) * r;
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    });
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = 'rgba(0,0,0,0.15)';
+    ctx.beginPath(); ctx.arc(5, 5, 8, 0, TAU); ctx.fill();
+  }
+  ctx.restore();
+}
+
+// =========================================================
+//  LANZAMIENTO Y MOVIMIENTO DE OBJETOS
+// =========================================================
+// Prepara un grupo de 2 o 3 objetos DIFERENTES entre si.
+function prepararVolley() {
+  const cantidad = (tiempo < 45) ? 2 : 2 + (Math.random() < 0.5 ? 1 : 0);
+  const mezclados = [...TIPOS].sort(() => Math.random() - 0.5);
+  const pausa = 0.55 - 0.2 * dificultad();   // separacion entre objetos del grupo
+  let tx = ultimoTx;
+  for (let i = 0; i < cantidad; i++) {
+    // Cada objeto cae cerca del anterior para que sea posible alcanzarlos a todos
+    tx = clamp(tx + (Math.random() * 2 - 1) * 260, 70, W - 70);
+    pendientes.push({ espera: i * pausa, tipo: mezclados[i], tx: tx });
+  }
+  ultimoTx = tx;
+  pulpo.lanza = 1;
+}
+
+function lanzarObjeto(p) {
+  // Tiempo de vuelo: empieza en 3.4 s (lento) y baja a 1.7 s (rapido)
+  const duracion = (3.4 - 1.7 * dificultad()) * (0.95 + Math.random() * 0.1);
+  objetos.push({
+    tipo: p.tipo, estado: 'bajando',
+    sx: pulpo.x, sy: Y_ORIGEN,    // punto de salida (la boca del pulpo)
+    tx: p.tx,                     // donde caeria en la arena
+    p: 0, T: duracion,            // progreso del vuelo (0 a 1)
+    q: 0, hx: 0, hy: 0, he: 1,    // datos del vuelo de regreso
+    giro: 0
+  });
+  pitido(300, 0.08, 'triangle');
+}
+
+// Posicion de un objeto. Efecto de perspectiva: lejos = pequeno, cerca = grande.
+function posObjeto(o) {
+  if (o.estado === 'bajando') {
+    const p = o.p;
+    return {
+      x: o.sx + (o.tx - o.sx) * p,
+      y: o.sy + (Y_BATE - o.sy) * p - Math.sin(Math.PI * p) * 60,
+      e: 0.3 + 0.8 * p
+    };
+  }
+  // Devuelto: vuela de regreso hacia el pulpo (siguiendolo mientras se mueve)
+  const q = o.q;
+  return {
+    x: o.hx + (pulpo.x - o.hx) * q,
+    y: o.hy + (Y_ORIGEN - o.hy) * q - Math.sin(Math.PI * q) * 60,
+    e: o.he + (0.3 - o.he) * q
+  };
+}
+
+function agregarParticulas(x, y, cantidad, color, fuerza, vida) {
+  for (let i = 0; i < cantidad; i++) {
+    particulas.push({
+      x: x, y: y,
+      vx: (Math.random() - 0.5) * fuerza, vy: (Math.random() - 0.7) * fuerza,
+      r: 2 + Math.random() * 3.5, vida: 1, dur: vida, color: color
+    });
+  }
+}
+
+// =========================================================
+//  CONTROLES
+// =========================================================
+lienzo.addEventListener('mousemove', (e) => {
+  const rect = lienzo.getBoundingClientRect();
+  gato.x = clamp((e.clientX - rect.left) * (W / rect.width), 45, W - 45);
+});
+lienzo.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  const rect = lienzo.getBoundingClientRect();
+  gato.x = clamp((e.touches[0].clientX - rect.left) * (W / rect.width), 45, W - 45);
+}, { passive: false });
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowLeft')  { gato.direccion = -1; e.preventDefault(); }
+  if (e.key === 'ArrowRight') { gato.direccion = 1;  e.preventDefault(); }
+  if ((e.key === ' ' || e.key === 'Enter') && estado !== 'jugando') iniciarPartida();
+});
+document.addEventListener('keyup', (e) => {
+  if ((e.key === 'ArrowLeft' && gato.direccion === -1) ||
+      (e.key === 'ArrowRight' && gato.direccion === 1)) gato.direccion = 0;
+});
+lienzo.addEventListener('click', () => { if (estado !== 'jugando') iniciarPartida(); });
+lienzo.addEventListener('touchstart', () => { if (estado !== 'jugando') iniciarPartida(); });
+
+// =========================================================
+//  LOGICA PRINCIPAL
+// =========================================================
+function iniciarPartida() {
+  vidas = 3; vidaPulpo = 100; tiempo = 0; aciertos = 0; racha = 0;
+  objetos = []; pendientes = []; particulas = []; textos = [];
+  proxVolley = 1.5; ultimoTx = W / 2; destelloRojo = 0;
+  estado = 'jugando';
+}
+
+// El pulpo se mueve de lado a lado (un poco mas rapido con el tiempo)
+function moverPulpo(seg) {
+  pulpo.fase += seg * (0.35 + 0.25 * dificultad());
+  pulpo.x = W / 2 + Math.sin(pulpo.fase) * (W / 2 - 170);
+  pulpo.lanza = Math.max(0, pulpo.lanza - seg * 3);
+  pulpo.herido = Math.max(0, pulpo.herido - seg * 3);
+}
+
+// El gato devuelve el objeto con la varita
+function golpear(o, pos) {
+  o.estado = 'devuelto';
+  o.q = 0; o.hx = pos.x; o.hy = pos.y; o.he = pos.e;
+  gato.swing = 1;
+  racha++;
+  agregarParticulas(pos.x, pos.y, 8, '255,220,80', 6, 0.6);
+  pitido(520, 0.09);
+  // Premio: cada cierto numero de aciertos seguidos recuperas un corazon
+  if (RACHA_PARA_VIDA > 0 && racha % RACHA_PARA_VIDA === 0 && vidas < 3) {
+    vidas++;
+    textos.push({ x: W / 2, y: 505, texto: '+1 ❤', vida: 1.5, color: '#fb923c' });
+    pitido(880, 0.25, 'triangle');
+  }
+}
+
+// El objeto cae en la arena: pierdes un corazon
+function caerEnArena(o) {
+  vidas--; racha = 0; destelloRojo = 1;
+  agregarParticulas(o.tx, Y_BATE, 14, '230,200,140', 7, 0.8);
+  pitido(120, 0.35, 'sawtooth');
+  if (vidas <= 0) { estado = 'derrota'; pitido(90, 0.8, 'sawtooth'); }
+}
+
+// El objeto devuelto llega al pulpo: le baja vida
+function impactarPulpo(o) {
+  const dano = o.tipo.dano * MULT_DANO;
+  vidaPulpo = Math.max(0, vidaPulpo - dano);
+  aciertos++;
+  pulpo.herido = 1;
+  textos.push({ x: pulpo.x, y: 150, texto: '-' + dano.toFixed(2) + '%', vida: 1.2, color: '#fde047' });
+  agregarParticulas(pulpo.x, Y_ORIGEN + 10, 8, '255,255,255', 5, 0.6);
+  pitido(700, 0.12);
+  if (vidaPulpo <= 0) { estado = 'victoria'; pitido(880, 0.6, 'triangle'); }
+}
+
+function actualizar(dt) {
+  const seg = dt / 60;
+  tiempo += seg;
+
+  // Movimiento del gato con las flechas
+  gato.x = clamp(gato.x + gato.direccion * 9 * dt, 45, W - 45);
+
+  // Lanzar grupos de objetos. Los grupos se hacen mas seguidos con el tiempo
+  proxVolley -= seg;
+  if (proxVolley <= 0) {
+    prepararVolley();
+    proxVolley = 3.8 - 2.0 * dificultad();   // de 3.8 s a 1.8 s entre grupos
+  }
+  for (let i = pendientes.length - 1; i >= 0; i--) {
+    pendientes[i].espera -= seg;
+    if (pendientes[i].espera <= 0) { lanzarObjeto(pendientes[i]); pendientes.splice(i, 1); }
+  }
+
+  // Movimiento y colisiones de cada objeto
+  for (let i = objetos.length - 1; i >= 0; i--) {
+    const o = objetos[i];
+    o.giro += 0.1 * dt;
+
+    if (o.estado === 'bajando') {
+      o.p += seg / o.T;
+      const pos = posObjeto(o);
+      if (Math.random() < 0.5) agregarParticulas(pos.x, pos.y, 1, '90,90,90', 1.2, 0.5); // humo
+
+      // ¿Esta al alcance de la varita?
+      if (o.p < 1 && pos.y >= Y_BATE - 75 && Math.abs(pos.x - (gato.x + 12)) < ZONA_GOLPE) {
+        golpear(o, pos);
+      } else if (o.p >= 1) {
+        caerEnArena(o);
+        objetos.splice(i, 1);
+        if (estado !== 'jugando') return;
+      }
+    } else {
+      o.q += seg / 0.8;                 // el regreso dura 0.8 segundos
+      if (o.q >= 1) {
+        impactarPulpo(o);
+        objetos.splice(i, 1);
+        if (estado !== 'jugando') return;
+      }
+    }
+  }
+
+  // Efectos visuales
+  gato.swing = Math.max(0, gato.swing - seg * 5);
+  destelloRojo = Math.max(0, destelloRojo - seg * 2);
+  particulas.forEach(p => { p.x += p.vx * dt; p.y += p.vy * dt; p.vida -= seg / p.dur; });
+  particulas = particulas.filter(p => p.vida > 0);
+  textos.forEach(t => { t.y -= 0.7 * dt; t.vida -= seg; });
+  textos = textos.filter(t => t.vida > 0);
+}
+
+// =========================================================
+//  INTERFAZ (HUD) Y PANTALLAS
+// =========================================================
+function rectRedondeado(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function dibujarCorazon(cx, cy, s, lleno) {
+  ctx.beginPath();
+  ctx.moveTo(cx, cy + s * 0.9);
+  ctx.bezierCurveTo(cx - s * 1.6, cy - s * 0.1, cx - s * 0.8, cy - s * 1.3, cx, cy - s * 0.45);
+  ctx.bezierCurveTo(cx + s * 0.8, cy - s * 1.3, cx + s * 1.6, cy - s * 0.1, cx, cy + s * 0.9);
+  ctx.fillStyle = lleno ? '#fb923c' : 'rgba(0,0,0,0.18)';
+  ctx.fill();
+  ctx.strokeStyle = lleno ? '#c2410c' : 'rgba(0,0,0,0.3)';
+  ctx.lineWidth = 3; ctx.stroke();
+}
+
+function dibujarHUD() {
+  // Barra de vida del pulpo
+  ctx.fillStyle = 'rgba(0,0,0,0.45)'; rectRedondeado(14, 12, 320, 24, 9); ctx.fill();
+  const ancho = 316 * (vidaPulpo / 100);
+  ctx.fillStyle = vidaPulpo > 50 ? '#22c55e' : vidaPulpo > 25 ? '#eab308' : '#ef4444';
+  if (ancho > 1) { rectRedondeado(16, 14, ancho, 20, 8); ctx.fill(); }
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 14px Arial';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('🐙 Pulpo: ' + vidaPulpo.toFixed(2) + '%', 174, 25);
+
+  // Tiempo y racha
+  ctx.textAlign = 'right';
+  ctx.fillStyle = 'rgba(0,0,0,0.45)'; rectRedondeado(W - 150, 12, 136, 24, 9); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 14px Arial';
+  ctx.fillText('⏱ ' + formatoTiempo(tiempo), W - 26, 25);
+  ctx.textAlign = 'left'; ctx.font = '12px Arial';
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillText('Racha: ' + racha + '  (cada ' + RACHA_PARA_VIDA + ' = +1 ❤)', 16, 50);
+
+  // Tres corazones naranjas abajo
+  for (let i = 0; i < 3; i++) dibujarCorazon(W / 2 + (i - 1) * 58 + 40, 535, 17, i < vidas);
+
+  // Leyenda: cuanto dano hace cada objeto
+  ctx.fillStyle = 'rgba(255,255,255,0.7)'; rectRedondeado(10, 462, 118, 92, 10); ctx.fill();
+  TIPOS.forEach((t, i) => {
+    dibujarObjeto(t, 34, 486 + i * 28, 0.5, 0);
+    ctx.fillStyle = '#3b2f1e'; ctx.font = 'bold 13px Arial';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText('-' + t.dano.toFixed(2) + '%', 56, 486 + i * 28);
+  });
+}
+
+function dibujarPantalla(titulo, lineas, color) {
+  ctx.fillStyle = 'rgba(10,20,40,0.72)';
+  ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = color; ctx.font = 'bold 44px Arial';
+  ctx.fillText(titulo, W / 2, 200);
+  ctx.fillStyle = '#f1f5f9'; ctx.font = '19px Arial';
+  lineas.forEach((l, i) => ctx.fillText(l, W / 2, 262 + i * 30));
+}
+
+function dibujar() {
+  ctx.drawImage(fondo, 0, 0);
+  dibujarOlas();
+  dibujarPulpo();
+
+  if (estado === 'inicio') {
+    dibujarGato();
+    dibujarPantalla('🐙 BATEA AL PULPO', [
+      'Devuelve los objetos con tu varita de estrella',
+      'No dejes caer mas de 3 objetos en la arena',
+      'Piedra -0.05%   Barril -0.10%   Bomba -0.15%',
+      'Vencer al pulpo toma unos 15 minutos... ¡Aguanta!',
+      '',
+      'Click o Espacio para empezar'
+    ], '#ffffff');
+    return;
+  }
+
+  dibujarHUD();
+  dibujarGato();
+
+  // Objetos (lejos primero, cerca despues)
+  const lista = objetos.map(o => ({ o: o, pos: posObjeto(o) })).sort((a, b) => a.pos.y - b.pos.y);
+  lista.forEach(it => dibujarObjeto(it.o.tipo, it.pos.x, it.pos.y, it.pos.e, it.o.giro));
+
+  // Particulas (humo, polvo, chispas)
+  particulas.forEach(p => {
+    ctx.fillStyle = 'rgba(' + p.color + ',' + (p.vida * 0.55) + ')';
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, TAU); ctx.fill();
+  });
+
+  // Textos flotantes
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = 'bold 24px Arial';
+  textos.forEach(t => {
+    ctx.globalAlpha = clamp(t.vida, 0, 1);
+    ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.strokeText(t.texto, t.x, t.y);
+    ctx.fillStyle = t.color; ctx.fillText(t.texto, t.x, t.y);
+  });
+  ctx.globalAlpha = 1;
+
+  // Destello rojo al perder un corazon
+  if (destelloRojo > 0) {
+    ctx.fillStyle = 'rgba(239,68,68,' + (destelloRojo * 0.35) + ')';
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  if (estado === 'derrota') {
+    dibujarPantalla('💀 EL PULPO GANO', [
+      'Aguantaste ' + formatoTiempo(tiempo),
+      'Al pulpo le quedaba ' + vidaPulpo.toFixed(2) + '% de vida',
+      'Objetos devueltos: ' + aciertos,
+      '',
+      'Click o Espacio para reintentar'
+    ], '#fca5a5');
+  } else if (estado === 'victoria') {
+    dibujarPantalla('🏆 ¡VENCISTE AL PULPO!', [
+      'Tiempo total: ' + formatoTiempo(tiempo),
+      'Objetos devueltos: ' + aciertos,
+      '',
+      'Click o Espacio para jugar otra vez'
+    ], '#86efac');
+  }
+}
+
+// =========================================================
+//  BUCLE PRINCIPAL (~60 veces por segundo)
+// =========================================================
+let ultimoTiempo = performance.now();
+function bucle(ahora) {
+  let dt = (ahora - ultimoTiempo) / 16.667;  // normalizado a 60 FPS
+  ultimoTiempo = ahora;
+  dt = Math.min(dt, 3);                      // evita saltos si la pestana estuvo inactiva
+
+  reloj += dt / 60;
+  moverPulpo(dt / 60);                       // el pulpo siempre se mueve (tambien en el menu)
+  if (estado === 'jugando') actualizar(dt);
+  dibujar();
+  requestAnimationFrame(bucle);
+}
+requestAnimationFrame(bucle);
+</script>
+</body>
+</html>
