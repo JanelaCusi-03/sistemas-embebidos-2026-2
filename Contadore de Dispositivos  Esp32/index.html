@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Equipos en la red</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;800&display=swap">
+<style>
+:root{
+  --bg:#F5F4F7; --card:#FFFFFF; --ink:#33303B; --muted:#8A8694; --line:#E8E5EE;
+  --lila:#E6DFF5; --menta:#D9F0E6; --durazno:#FBE3D8; --cielo:#D8E9F7; --gris:#ECEAF0; --rosa:#F7DCE6;
+  --focus:#7A62C9;
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#1F1D25; --card:#2A2831; --ink:#F0EEF4; --muted:#A39FAE; --line:#3A3744;
+  --lila:#3E3659; --menta:#2C4A3E; --durazno:#5A3F34; --cielo:#2F4560; --gris:#3A3744; --rosa:#5A3446;}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Nunito",system-ui,-apple-system,"Segoe UI",sans-serif;line-height:1.5}
+main{max-width:960px;margin:0 auto;padding:28px 18px 60px}
+header{display:flex;align-items:center;gap:16px;margin-bottom:22px}
+.mascota{width:64px;height:64px;flex:none}
+h1{font-size:1.7rem;font-weight:800;margin:0;letter-spacing:-.01em}
+header p{margin:2px 0 0;color:var(--muted)}
+.barra{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:18px}
+.filtros{display:flex;flex-wrap:wrap;gap:8px;flex:1}
+.pill{border:2px solid transparent;border-radius:999px;padding:7px 14px;font:inherit;font-weight:600;color:var(--ink);cursor:pointer;background:var(--gris)}
+.pill[aria-pressed="true"]{border-color:var(--ink)}
+.pill b{font-weight:800;margin-left:4px;opacity:.7}
+input[type=search]{font:inherit;border:2px solid var(--line);background:var(--card);color:var(--ink);border-radius:999px;padding:7px 16px;min-width:200px}
+:is(button,input):focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+.tabla{background:var(--card);border-radius:22px;border:1px solid var(--line);overflow-x:auto;padding:6px 10px}
+table{border-collapse:collapse;width:100%;min-width:760px}
+th{text-align:left;font-weight:600;color:var(--muted);font-size:.9rem;padding:12px 12px 8px}
+td{padding:12px;border-top:1px solid var(--line)}
+tbody tr:first-child td{border-top:0}
+.tipo{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:3px 12px 3px 8px;font-weight:600;font-size:.92rem;background:var(--gris)}
+.mono{font-variant-numeric:tabular-nums;color:var(--muted)}
+.estado{text-align:center;padding:36px 12px;color:var(--muted)}
+footer{margin-top:14px;color:var(--muted);font-size:.9rem;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
+@media (prefers-reduced-motion:no-preference){ .mascota{animation:flota 4s ease-in-out infinite} }
+@keyframes flota{50%{transform:translateY(-4px)}}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <svg class="mascota" viewBox="0 0 64 64" role="img" aria-label="Mascota ESP32 sonriendo">
+      <rect x="8" y="12" width="48" height="42" rx="14" fill="var(--lila)"/>
+      <path d="M22 12v-6M32 12V4M42 12v-6" stroke="var(--muted)" stroke-width="3" stroke-linecap="round"/>
+      <circle cx="23" cy="32" r="4" fill="var(--ink)"/><circle cx="41" cy="32" r="4" fill="var(--ink)"/>
+      <circle cx="16" cy="40" r="4" fill="var(--durazno)"/><circle cx="48" cy="40" r="4" fill="var(--durazno)"/>
+      <path d="M27 41q5 5 10 0" stroke="var(--ink)" stroke-width="3" fill="none" stroke-linecap="round"/>
+    </svg>
+    <div>
+      <h1>Equipos en la red</h1>
+      <p>Lo que mi ESP32 encontró conectado</p>
+    </div>
+  </header>
+
+  <div class="barra">
+    <div class="filtros" id="filtros" role="group" aria-label="Filtrar por tipo"></div>
+    <input type="search" id="buscar" placeholder="Buscar por nombre, IP o MAC" aria-label="Buscar">
+  </div>
+
+  <div class="tabla">
+    <table>
+      <thead><tr><th>Tipo</th><th>Nombre</th><th>IP</th><th>MAC</th><th>Canal</th><th>RSSI</th><th>Distancia</th></tr></thead>
+      <tbody id="filas"></tbody>
+    </table>
+    <div class="estado" id="estado">Cargando equipos…</div>
+  </div>
+  <footer><span id="resumen"></span><span id="actualizado"></span></footer>
+</main>
+
+<script>
+// Pegue aquí la URL de su Lambda (Function URL). Si la deja vacía, verá datos de ejemplo.
+const API_URL = "";
+
+// Un equipo se muestra solo si se vio en los últimos N segundos (si se desconecta, desaparece).
+const SEGUNDOS_ACTIVO = 40;
+
+const ICONOS = {"móvil":"📱","tablet":"📲","router":"📡","laptop":"💻","iot":"🤖","impresora":"🖨️","tv":"📺","consola":"🎮","cámara":"📷","desconocido":"❔","red wifi":"📶","otro":"🔹"};
+const PALETA = ["var(--lila)","var(--menta)","var(--cielo)","var(--durazno)","var(--rosa)"];
+let tiposOrden = [];
+const icono = t => ICONOS[t.toLowerCase()] || "🔹";
+const color = t => PALETA[Math.max(0,tiposOrden.indexOf(t)) % PALETA.length];
+
+// "Infinix-X6873" -> "Infinix X6873"
+const bonito = n => String(n||"").replace(/[-_]+/g," ").trim();
+
+// Si el nombre da pistas, deduce el tipo (Tablet, Laptop, Móvil...)
+function tipoPorNombre(n){
+  const t = " " + n.toLowerCase() + " ";
+  if (/ (ipad|tab|tablet|pad)[ \d]|ipad|galaxy tab/.test(t)) return "Tablet";
+  if (/laptop|desktop|macbook|notebook|thinkpad|ideapad|imac|surface| pc |-pc/.test(t)) return "Laptop";
+  if (/ tv |roku|chromecast|firestick|bravia/.test(t)) return "TV";
+  if (/printer|laserjet|epson|brother|canon/.test(t)) return "Impresora";
+  if (/iphone|android|galaxy|redmi|poco|infinix|tecno|itel|pixel|oppo|vivo|realme|honor|moto|oneplus|xiaomi/.test(t)) return "Móvil";
+  return null;
+}
+
+const DEMO = [
+  {ip:"192.168.1.1",mac:"50:C7:BF:11:22:33",tipo:"Router",modelo:"TP-Link",distancia:2.1,edad:3},
+  {ip:"192.168.1.12",mac:"FC:A6:67:AA:BB:CC",tipo:"Móvil",modelo:"Samsung",nombre:"Galaxy-Tab-A8",distancia:18.4,edad:5},
+  {ip:"192.168.1.15",mac:"F0:18:98:01:02:03",tipo:"Móvil",modelo:"Apple",nombre:"Infinix-X6873",distancia:25.9,edad:8},
+  {ip:"192.168.1.20",mac:"B8:27:EB:0A:0B:0C",tipo:"IoT",modelo:"Raspberry Pi",distancia:6.3,edad:2},
+  {ip:"192.168.1.33",mac:"00:00:00:00:00:33",tipo:"Laptop",modelo:"Desconocido",nombre:"JanelaCusi",distancia:4,edad:12}
+];
+// Redes WiFi cercanas de ejemplo (SSID -> Nombre, BSSID -> MAC)
+const DEMO_REDES = [
+  {ssid:"paco",bssid:"06:3C:89:AE:80:E4",canal:6,rssi:-49,distancia:2.565,edad:4},
+  {ssid:"Casa Cirilla",bssid:"44:3B:14:48:FD:E8",canal:6,rssi:-64,distancia:12.328,edad:4},
+  {ssid:"FAM_MACEDO-1",bssid:"EC:A8:1F:63:3E:49",canal:11,rssi:-92,distancia:230.5,edad:4}
+];
+
+// Una red WiFi se muestra como una fila más: SSID en Nombre y BSSID en MAC
+const aFila = r => ({esRed:true, tipo:"Red WiFi", nombre:r.ssid, mac:r.bssid, ip:"",
+                     canal:r.canal, rssi:r.rssi, distancia:r.distancia, edad:r.edad});
+
+let datos = [], filtro = "Todos";
+const ipNum = ip => String(ip).split(".").reduce((a,o)=>a*256+(+o),0);
+const $ = id => document.getElementById(id);
+function esc(t){ return String(t ?? "").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+function pintar(){
+  const q = $("buscar").value.trim().toLowerCase();
+  const conTipo = datos.map(e=>{
+    if (e.esRed) return {...e, nombreFinal: e.nombre || "(red oculta)"};   // el SSID tal cual
+    const nombre = bonito(e.nombre);
+    const porNombre = (e.tipo !== "Router" && nombre) ? tipoPorNombre(nombre) : null;
+    return {...e,
+      nombreFinal: nombre || (e.tipo === "Router" ? e.modelo : "Desconocido"),
+      tipo: porNombre || e.tipo || "Desconocido"};
+  });
+
+  // los filtros salen de los tipos que existen en la base de datos
+  tiposOrden = [...new Set(conTipo.map(e=>e.tipo))].sort();
+  if (filtro!=="Todos" && !tiposOrden.includes(filtro)) filtro="Todos";
+  const cuenta = t => conTipo.filter(e=>t==="Todos"||e.tipo===t).length;
+  $("filtros").innerHTML = ["Todos",...tiposOrden].map(t=>
+    `<button class="pill" style="background:${t==="Todos"?"var(--gris)":color(t)}" data-t="${esc(t)}" aria-pressed="${filtro===t}">${t==="Todos"?"🌸":icono(t)} ${esc(t)}<b>${cuenta(t)}</b></button>`).join("");
+  $("filtros").querySelectorAll("button").forEach(b=>b.onclick=()=>{filtro=b.dataset.t;pintar();});
+
+  const lista = conTipo
+    .filter(e=>filtro==="Todos"||e.tipo===filtro)
+    .filter(e=>!q||[e.nombreFinal,e.ip,e.mac,e.tipo].join(" ").toLowerCase().includes(q))
+    // primero los equipos (por IP), después las redes (la de mejor señal primero)
+    .sort((a,b)=> (a.esRed?1:0)-(b.esRed?1:0) ||
+                  (a.esRed ? (b.rssi??-999)-(a.rssi??-999) : ipNum(a.ip)-ipNum(b.ip)));
+
+  $("filas").innerHTML = lista.map(e=>`<tr>
+    <td><span class="tipo" style="background:${color(e.tipo)}">${icono(e.tipo)} ${esc(e.tipo)}</span></td>
+    <td>${esc(e.nombreFinal)}</td>
+    <td class="mono">${esc(e.ip || "—")}</td>
+    <td class="mono">${esc(e.mac || "—")}</td>
+    <td class="mono">${e.canal==null ? "—" : esc(e.canal)}</td>
+    <td class="mono">${e.rssi==null ? "—" : esc(e.rssi) + " dBm"}</td>
+    <td class="mono">${e.distancia==null ? "—" : Number(Number(e.distancia).toFixed(3)) + " m"}</td></tr>`).join("");
+
+  $("estado").style.display = lista.length ? "none" : "block";
+  if (!lista.length) $("estado").textContent = datos.length ? "Ningún equipo coincide con ese filtro." : "No hay equipos conectados en este momento.";
+  const nRedes = datos.filter(e=>e.esRed).length;
+  $("resumen").textContent = `${lista.length} de ${datos.length} · ${datos.length-nRedes} equipos conectados · ${nRedes} redes WiFi cercanas`;
+}
+
+async function cargar(){
+  try{
+    let items = DEMO, redes = DEMO_REDES;
+    if (API_URL){
+      const urlRedes = API_URL + (API_URL.includes("?") ? "&" : "?") + "redes=1";
+      const [r, rr] = await Promise.all([fetch(API_URL), fetch(urlRedes).catch(()=>null)]);
+      if (!r.ok) throw new Error(r.status);
+      items = await r.json();
+      redes = (rr && rr.ok) ? await rr.json() : [];   // si fallan las redes, igual se ven los equipos
+    }
+    items = items.concat(redes.map(aFila));
+    // dejar solo el registro más reciente de cada IP (o de cada BSSID en las redes)
+    const ultimo = {};
+    items.forEach(e=>{ const k = e.ip || e.mac;
+      if(!ultimo[k] || e.edad<ultimo[k].edad) ultimo[k]=e; });
+    datos = Object.values(ultimo).filter(e => e.edad <= SEGUNDOS_ACTIVO);
+    $("actualizado").textContent = (API_URL?"":"Datos de ejemplo · ") + "Actualizado " + new Date().toLocaleTimeString();
+    pintar();
+  }catch(err){
+    $("estado").style.display="block";
+    $("estado").textContent = "No pude cargar los datos. Revisa la URL de la API y el CORS de la Lambda.";
+  }
+}
+
+$("buscar").addEventListener("input", pintar);
+cargar();
+setInterval(cargar, 5000);
+</script>
+</body>
+</html>
